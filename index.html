@@ -33,6 +33,8 @@
       --hud-border: #1e293b;
       --hud-accent: #38bdf8;
       --hud-label: #64748b;
+      --timer-warning: #f59e0b;
+      --timer-critical: #ef4444;
       --shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.5), 0 0 20px rgba(99, 102, 241, 0.1);
     }
 
@@ -65,6 +67,8 @@
         --hud-border: #cbd5e1;
         --hud-accent: #0284c7;
         --hud-label: #64748b;
+        --timer-warning: #b45309;
+        --timer-critical: #dc2626;
         --shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.1), 0 4px 6px -4px rgba(15, 23, 42, 0.05);
       }
     }
@@ -269,6 +273,64 @@
       background: var(--progress-fill);
       border-radius: 9999px;
       transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .timer-display {
+      margin-bottom: 18px;
+    }
+
+    .timer-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      color: var(--text-muted);
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .timer-value {
+      color: var(--hud-accent);
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .timer-track {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 9999px;
+      background: var(--progress-track);
+    }
+
+    .timer-fill {
+      width: 100%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--hud-accent);
+      transition: width 0.1s linear, background-color 0.2s ease;
+    }
+
+    .timer-display.is-warning .timer-value {
+      color: var(--timer-warning);
+    }
+
+    .timer-display.is-warning .timer-fill {
+      background-color: var(--timer-warning);
+    }
+
+    .timer-display.is-critical .timer-value {
+      color: var(--timer-critical);
+    }
+
+    .timer-display.is-critical .timer-fill {
+      background-color: var(--timer-critical);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .timer-fill {
+        transition: none;
+      }
     }
 
     /* Question */
@@ -623,6 +685,15 @@
 
       <!-- Active Quiz Container -->
       <div id="quizScreen">
+        <div id="timerDisplay" class="timer-display" role="timer" aria-label="Time remaining: 15 seconds">
+          <div class="timer-meta">
+            <span>Time remaining</span>
+            <span id="timerValue" class="timer-value">15s</span>
+          </div>
+          <div class="timer-track" aria-hidden="true">
+            <div id="timerFill" class="timer-fill"></div>
+          </div>
+        </div>
         <div id="questionCategory" class="question-category">Topic</div>
         <h2 id="questionText" class="question-title">Loading question...</h2>
 
@@ -631,7 +702,7 @@
         </div>
 
         <!-- Animated Feedback Box -->
-        <div id="feedbackBox" class="feedback-box">
+        <div id="feedbackBox" class="feedback-box" role="status" aria-live="polite" aria-atomic="true">
           <div id="feedbackTitle" class="feedback-title"></div>
           <div id="feedbackText"></div>
         </div>
@@ -752,12 +823,18 @@
     let currentIndex = 0;
     let score = 0;
     let answered = false;
+    const QUESTION_TIME_LIMIT_SECONDS = 15;
+    let timerIntervalId = null;
+    let timerDeadline = 0;
 
     // DOM Elements
     const quizScreen = document.getElementById('quizScreen');
     const resultsScreen = document.getElementById('resultsScreen');
     const questionCategory = document.getElementById('questionCategory');
     const questionText = document.getElementById('questionText');
+    const timerDisplay = document.getElementById('timerDisplay');
+    const timerValue = document.getElementById('timerValue');
+    const timerFill = document.getElementById('timerFill');
     const optionsContainer = document.getElementById('optionsContainer');
     const feedbackBox = document.getElementById('feedbackBox');
     const feedbackTitle = document.getElementById('feedbackTitle');
@@ -792,7 +869,39 @@
       scoreBadge.setAttribute('aria-label', `Score: ${score} of ${total}`);
     }
 
+    function stopTimer() {
+      if (timerIntervalId !== null) {
+        clearInterval(timerIntervalId);
+        timerIntervalId = null;
+      }
+    }
+
+    function updateTimer() {
+      if (answered) return;
+
+      const remainingMs = Math.max(0, timerDeadline - Date.now());
+      const remainingSeconds = Math.ceil(remainingMs / 1000);
+      timerValue.textContent = `${remainingSeconds}s`;
+      timerDisplay.setAttribute('aria-label', `Time remaining: ${remainingSeconds} seconds`);
+      timerFill.style.width = `${(remainingMs / (QUESTION_TIME_LIMIT_SECONDS * 1000)) * 100}%`;
+      timerDisplay.classList.toggle('is-warning', remainingSeconds <= 10 && remainingSeconds > 5);
+      timerDisplay.classList.toggle('is-critical', remainingSeconds <= 5);
+
+      if (remainingMs === 0) {
+        stopTimer();
+        handleTimeout();
+      }
+    }
+
+    function startTimer() {
+      stopTimer();
+      timerDeadline = Date.now() + QUESTION_TIME_LIMIT_SECONDS * 1000;
+      updateTimer();
+      timerIntervalId = setInterval(updateTimer, 100);
+    }
+
     function loadQuestion() {
+      stopTimer();
       answered = false;
       feedbackBox.className = 'feedback-box';
       feedbackBox.style.display = 'none';
@@ -822,11 +931,14 @@
         btn.addEventListener('click', () => handleSelectOption(index));
         optionsContainer.appendChild(btn);
       });
+
+      startTimer();
     }
 
     function handleSelectOption(selectedIndex) {
       if (answered) return;
       answered = true;
+      stopTimer();
 
       const q = questions[currentIndex];
       const buttons = optionsContainer.querySelectorAll('.option-btn');
@@ -871,6 +983,36 @@
       nextBtn.focus();
     }
 
+    function handleTimeout() {
+      if (answered) return;
+      answered = true;
+
+      const q = questions[currentIndex];
+      const buttons = optionsContainer.querySelectorAll('.option-btn');
+
+      buttons.forEach((btn, index) => {
+        btn.disabled = true;
+        const icon = btn.querySelector('.option-status-icon');
+
+        if (index === q.answer) {
+          btn.classList.add('correct');
+          icon.textContent = '✓';
+        } else {
+          btn.classList.add('dimmed');
+        }
+      });
+
+      feedbackBox.className = 'feedback-box show is-wrong';
+      feedbackBox.style.display = 'block';
+      feedbackTitle.innerHTML = '<span>⏱️</span> Out of time';
+      feedbackText.textContent = `The correct answer is ${q.options[q.answer]}. ${q.fact}`;
+
+      const completedPercent = Math.round(((currentIndex + 1) / questions.length) * 100);
+      percentCounter.textContent = `${completedPercent}%`;
+      progressBar.style.width = `${completedPercent}%`;
+      nextBtn.style.display = 'inline-flex';
+    }
+
     function handleNext() {
       if (currentIndex < questions.length - 1) {
         currentIndex++;
@@ -881,6 +1023,7 @@
     }
 
     function showResults() {
+      stopTimer();
       quizScreen.style.display = 'none';
       resultsScreen.style.display = 'block';
 
